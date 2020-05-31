@@ -4,10 +4,10 @@
 void ofApp::setup(){
     
     ofBackground(54, 54, 54);
-    hc = createHilbertCurve(8);
+    hc = createHilbertCurve(hilbertOrder);
     
-    camWidth = 256;
-    camHeight = 256;
+    camWidth = pow(2, hilbertOrder);
+    camHeight = pow(2, hilbertOrder);
     
     vidGrabber.listDevices();
     
@@ -18,10 +18,21 @@ void ofApp::setup(){
     vidPixels.allocate(camWidth, camHeight, OF_PIXELS_RGB);
     
     sender.setup("localhost", oscPort);
+    
+    gui.setup();
+    gui.setPosition(300, 30);
+    gui.add(rgbSlider.setup("Image RGB Scalers", ofVec3f(1.0, 1.0, 1.0), ofVec3f(0, 0, 0), ofVec3f(1.0, 1.0, 1.0)));
+    
+    gui.add(modeToggles[0].setup("Normal Mode", true));
+    gui.add(modeToggles[1].setup("Gradient Mode", false));
+    gui.add(modeToggles[2].setup("Test Mode", false));
 }
 
 //--------------------------------------------------------------
 void ofApp::update(){
+    
+    processUIUpdates();
+    
     vidGrabber.update();
     if (vidGrabber.isFrameNew())
     {
@@ -29,12 +40,7 @@ void ofApp::update(){
         p.resize(camWidth, camHeight);
         p.mirror(false, true);
         
-        if (!isTestSignal)
-            mapImageToFrequency(p);
-        
-        else
-            createTestFrequency();
-        
+        mapImageToFrequency(p);
         sendSpectrumToAudioEngine();
         
         for (size_t i = 0; i < p.size(); ++i)
@@ -46,6 +52,9 @@ void ofApp::update(){
 
 //--------------------------------------------------------------
 void ofApp::draw(){
+    
+    gui.draw();
+    
     vidTexture.draw(20, 20);
     
     ofSetColor(245, 58, 135);
@@ -125,9 +134,82 @@ void ofApp::dragEvent(ofDragInfo dragInfo){
 }
 
 
-void ofApp::audioOut(ofSoundBuffer &buffer)
+void ofApp::processUIUpdates()
 {
+    checkForModeChanges();
+}
 
+
+void ofApp::checkForModeChanges()
+{
+    int toggleMask = 0;
+    for (int i = 0; i < modeToggles.size(); ++i)
+    {
+        int status = modeToggles[i];
+        toggleMask |= status << i;
+    }
+
+    if (toggleMask == 0)
+    {
+        updateToggleUI(currentModeMask);
+        return;
+    }
+    
+    if (toggleMask != currentModeMask)
+    {
+        //  Clear bit representing current Mode
+        int mask = 0xFFFFFFFF ^ currentModeMask;
+        toggleMask &= mask;
+        
+        //  Only one mode can be enabled at any time
+        if ((toggleMask % 2 != 0) && (toggleMask != 1))
+        {
+            updateToggleUI(currentModeMask);
+            return;
+        }
+        
+        int counter = 0;
+        while (counter < NUM_MODES)
+        {
+            if (toggleMask & 0x01)
+                break;
+            
+            toggleMask = toggleMask >> 1;
+            counter++;
+        }
+        
+        currentModeMask = 0;
+        currentModeMask |= 1 << counter;
+        updateToggleUI(currentModeMask);
+    }
+}
+
+
+void ofApp::updateToggleUI(int mask)
+{
+    for (int i = 0; i < modeToggles.size(); ++i)
+    {
+        modeToggles[i] = mask & 0x01;
+        mask = mask >> 1;
+    }
+}
+
+
+int ofApp::getCurrentMode()
+{
+    int counter = 0;
+    int mask = currentModeMask;
+    
+    while (counter < modeToggles.size())
+    {
+        if (mask & 0x01)
+            break;
+        
+        counter++;
+        mask = mask >> 1;
+    }
+    
+    return counter;
 }
 
 
@@ -188,7 +270,40 @@ void ofApp::drawCursor()
 void ofApp::mapImageToFrequency(const ofPixels &pixels)
 {
     std::fill(X.begin(), X.end(), 0.0);
+    int mode = getCurrentMode();
     
+    switch (mode)
+    {
+        case NORMAL_MODE:
+        {
+            normalImageToFreqMapping(pixels);
+            break;
+        }
+            
+        case GRADIENT_MODE:
+        {
+            gradientImageToFreqMapping(pixels);
+            break;
+        }
+            
+        case TEST_MODE:
+        {
+            createTestFrequency();
+            break;
+        }
+            
+        default:
+        {
+            normalImageToFreqMapping(pixels);
+            break;
+        }
+            
+    }
+}
+
+
+void ofApp::normalImageToFreqMapping(const ofPixels &pixels)
+{
     auto blockSize = (camWidth * camHeight) / (fftSize / 2);
     auto currentBlock = 1;
     auto numPixelsInBlock = 0;
@@ -201,9 +316,9 @@ void ofApp::mapImageToFrequency(const ofPixels &pixels)
             numPixelsInBlock = 0;
         }
         
-        X[currentBlock] += (1.f - (pixels.getColor(hc[i].x, hc[i].y).r / 255.f)) * 0.8;
-        X[currentBlock] += (1.f - (pixels.getColor(hc[i].x, hc[i].y).g / 255.f)) * 0.7;
-        X[currentBlock] += (1.f - (pixels.getColor(hc[i].x, hc[i].y).b / 255.f)) * 0.4;
+        X[currentBlock] += (1.f - (pixels.getColor(hc[i].x, hc[i].y).r / 255.f)) * rgbSlider->x;
+        X[currentBlock] += (1.f - (pixels.getColor(hc[i].x, hc[i].y).g / 255.f)) * rgbSlider->y;
+        X[currentBlock] += (1.f - (pixels.getColor(hc[i].x, hc[i].y).b / 255.f)) * rgbSlider->z;
         
         numPixelsInBlock++;
     }
@@ -211,6 +326,40 @@ void ofApp::mapImageToFrequency(const ofPixels &pixels)
     float gain = 1.0;
     for (int i = 0; i < X.size(); ++i)
         X[i] = (X[i] / (float)blockSize) * gain;
+}
+
+
+void ofApp::gradientImageToFreqMapping(const ofPixels &pixels)
+{
+    auto blockSize = (camWidth * camHeight) / (fftSize / 2);
+    auto currentBlock = 1;
+    auto numPixelsInBlock = 0;
+    float maxDelta = 0;
+    
+    for (int i = 1; i < hc.size() - blockSize; ++i)
+    {
+        if (numPixelsInBlock > blockSize - 1)
+        {
+            X[currentBlock] = pow(maxDelta, 4);
+            currentBlock++;
+            numPixelsInBlock = 0;
+            maxDelta = 0;
+        }
+        
+        float deltaR = ((pixels.getColor(hc[i].x, hc[i].y).r / 255.f) * rgbSlider->x) - ((pixels.getColor(hc[i - 1].x, hc[i - 1].y).r / 255.f) * rgbSlider->x);
+        
+        float deltaG = ((pixels.getColor(hc[i].x, hc[i].y).g / 255.f) * rgbSlider->x) - ((pixels.getColor(hc[i - 1].x, hc[i - 1].y).g / 255.f) * rgbSlider->y);
+        
+        float deltaB = ((pixels.getColor(hc[i].x, hc[i].y).b / 255.f) * rgbSlider->x) - ((pixels.getColor(hc[i - 1].x, hc[i - 1].y).b / 255.f) * rgbSlider->z);
+        
+        float delta = sqrt((deltaR * deltaR) + (deltaG * deltaG) + (deltaB * deltaB));
+        
+        if (delta > maxDelta)
+            maxDelta = delta;
+        
+        numPixelsInBlock++;
+    }
+    
 }
 
 

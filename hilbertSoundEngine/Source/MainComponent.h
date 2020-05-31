@@ -16,7 +16,8 @@
     your controls and content.
 */
 class MainComponent   : public AudioAppComponent,
-                        private OSCReceiver::Listener<OSCReceiver::MessageLoopCallback>
+                        private OSCReceiver::Listener<OSCReceiver::MessageLoopCallback>,
+                        private Timer
 {
 public:
     //==============================================================================
@@ -52,12 +53,15 @@ private:
     
     void processIncomingSpectrum(float *X);
     
+    void timerCallback() override;
+    
     dsp::FFT fft;
-    constexpr static auto fftOrder = 11;
+    constexpr static auto fftOrder = 10;
     constexpr static auto fftSize = 1 << fftOrder;
     
     bool okToWrite = true;
     bool okToSwitchBuffer = false;
+    bool firstSampleReceived = false;
     std::array<std::array<float, fftSize * 2>, 2> X;
     size_t readBuffer = 0;
     size_t writeBuffer = 1;

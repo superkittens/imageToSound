@@ -45,6 +45,7 @@ MainComponent::MainComponent() : fft(fftOrder)
     
     oscReceiver.addListener(this);
     
+    startTimerHz(30);
 }
 
 MainComponent::~MainComponent()
@@ -119,9 +120,20 @@ void MainComponent::releaseResources()
 void MainComponent::paint (Graphics& g)
 {
     // (Our component is opaque, so we must completely fill the background with a solid colour)
-    g.fillAll (getLookAndFeel().findColour (ResizableWindow::backgroundColourId));
+    g.fillAll (Colours::black);
+    
+    g.setOpacity (1.0f);
+    g.setColour (Colours::white);
 
     // You can add your drawing code here!
+    if (okToWrite && firstSampleReceived)
+    {
+        auto height = getLocalBounds().getHeight();
+        for (int i = 1; i < fftSize - 1; ++i)
+        {
+            g.drawLine(i, (height / 2) - X[readBuffer][i] * 1000.0, i + 1, (height / 2) - X[readBuffer][i + 1] * 1000.0);
+        }
+    }
 }
 
 void MainComponent::resized()
@@ -129,6 +141,8 @@ void MainComponent::resized()
     // This is called when the MainContentComponent is resized.
     // If you add any child components, this is where you should
     // update their positions.
+    
+    Image img;
 }
 
 void MainComponent::oscMessageReceived(const OSCMessage &message)
@@ -169,6 +183,13 @@ void MainComponent::processIncomingSpectrum(float *X)
     fft.performRealOnlyInverseTransform(X);
     X[0] = X[fftSize - 1];
     okToSwitchBuffer = true;
+    firstSampleReceived = true;
+}
+
+
+void MainComponent::timerCallback()
+{
+    repaint();
 }
 
 
